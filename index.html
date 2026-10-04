@@ -456,6 +456,8 @@ button.spill:hover{box-shadow:0 0 0 2px var(--tint-strong)}
 .flagbtn{border:0;background:none;color:var(--muted);opacity:.5;font-size:13px;cursor:pointer;padding:0 5px 0 0;line-height:1;vertical-align:middle}
 .flagbtn:hover{opacity:1;color:var(--ink)}
 .flagbtn.on{color:var(--overdue);opacity:1}
+.subtask[data-gid],.sum-action[data-gid],.vrow[data-gid],.inbox-row[data-gid],.done-row[data-gid],table.actions tr[data-gid]{cursor:pointer}
+.subtask[data-gid]:hover,.sum-action[data-gid]:hover,.vrow[data-gid]:hover,.inbox-row[data-gid]:hover,.done-row[data-gid]:hover{background:var(--tint-soft);border-radius:8px}
 .tlink{border:0;background:none;font:inherit;color:inherit;padding:0;cursor:pointer;text-align:left;border-bottom:1px solid transparent}
 .tlink:hover{color:var(--blue);border-bottom-color:var(--sky)}
 .tm-proj{font-size:12.5px;color:var(--muted);display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px}
@@ -482,6 +484,11 @@ button.spill:hover{box-shadow:0 0 0 2px var(--tint-strong)}
 .prio-pill .pp-main small{color:rgba(255,255,255,.75);font-weight:500}
 .prio-pill .xbtn{color:rgba(255,255,255,.75);padding:2px 6px}
 .prio-pill .xbtn:hover{color:#fff;background:rgba(255,255,255,.18)}
+.recap-proj{padding:10px 4px;border-bottom:1px solid var(--line-soft)}
+.recap-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:15px;margin-bottom:4px}
+.recap-head .meta,.recap-line .meta{font-size:12.5px;color:var(--muted)}
+.recap-line{font-size:13.5px;padding:3px 0 3px 14px;line-height:1.4}
+.recap-line.done-line{color:var(--ink)}
 .me-lead{margin-bottom:10px}
 .me-lead .rowhead{grid-template-columns:minmax(0,1fr) 150px 160px 150px 30px}
 .me-lead .stline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;font-size:12.5px;color:var(--muted)}
@@ -1038,7 +1045,34 @@ function renderSummary(){
       : `<div class="empty">Everyone's in this week.</div>`}
       <button class="ghostbtn" id="goOOO" type="button">Manage out of office</button>
     </div>
-  </div>`;
+  </div>
+  ${(() => {
+    const r = computeRecap(recapMode);
+    const stat = (n, w) => `<b>${n}</b> ${w}${n===1?"":"s"}`;
+    return `
+    <div class="pv-divider"></div>
+    <div class="pv-head">
+      <div>
+        <h2 class="pv-title">Progress — ${esc(r.label)}</h2>
+        <p class="workload-note" style="margin:4px 0 0">${stat(r.nDone,"task")} completed · ${stat(r.nSteps,"next step")} logged · ${stat(r.nStatus,"status update")}${r.nNew?` · ${stat(r.nNew,"new task")} added`:""}</p>
+      </div>
+      <div class="pv-filters">
+        <button class="fchip ${recapMode==="last"?"on":""}" data-recap="last" type="button">Last week</button>
+        <button class="fchip ${recapMode==="this"?"on":""}" data-recap="this" type="button">This week so far</button>
+        <button class="primary sm" id="recapEmail" type="button">Email recap to ${PARTNERS.join(" & ")}</button>
+      </div>
+    </div>
+    ${r.groups.length ? r.groups.map(({g, items}) => `
+      <h2 class="blockhead" style="margin-top:18px">${esc(g)}<span class="rule"></span></h2>
+      <div class="ledger">${items.map(({m, done, steps, created, status}) => `
+        <div class="recap-proj">
+          <div class="recap-head"><b>${esc(m.name)}</b>${m.lead?` <span class="meta">· ${esc(m.lead)}</span>`:""} ${chip(m.horizon, m.dueDate, false)}${status?` ${statusPill(m,false)}${status.note?` <span class="meta">${esc(status.note)}</span>`:""}`:""}</div>
+          ${done.map(s => `<div class="recap-line done-line" data-gid="${s.gid}">✓ ${tlink(s)} <span class="meta">${esc(s.assignee||"")}${s.doneAt?" · "+fmtWhen(s.doneAt):""}</span></div>`).join("")}
+          ${steps.map(({s,e}) => `<div class="recap-line" data-gid="${s.gid}">→ <span class="meta">${esc(s.name)}:</span> ${esc(e.text)} <span class="meta">${esc(e.by||"")} · ${fmtWhen(e.t)}</span></div>`).join("")}
+          ${created.map(s => `<div class="recap-line" data-gid="${s.gid}">+ New: ${tlink(s)} <span class="meta">${esc(s.assignee||"Unassigned")}${s.dueDate?" · due "+fmt(s.dueDate):""}</span></div>`).join("")}
+        </div>`).join("")}</div>`).join("")
+    : `<div class="empty">Nothing logged ${recapMode==="last"?"last week":"yet this week"} — completions, next steps and status updates will show here as they happen.</div>`}`;
+  })()}`;
 
   el.querySelectorAll("[data-toggle]").forEach(t => t.addEventListener("change", () => {
     MODEL.overrides[t.dataset.toggle] = false; saveReview(); renderAll();
@@ -1049,6 +1083,8 @@ function renderSummary(){
     toast("Added to this week's review");
   }));
   el.querySelector("#goOOO").addEventListener("click", ()=>activate("ooo"));
+  el.querySelectorAll("[data-recap]").forEach(b => b.addEventListener("click", () => { recapMode = b.dataset.recap; renderSummary(); }));
+  el.querySelector("#recapEmail").addEventListener("click", () => openEmail("recap"));
   bindChecks(el);
 }
 
@@ -1176,7 +1212,7 @@ function renderVault(){
     if (e.key !== "Enter") return;
     const name = inp.value.trim(); if (!name) return;
     const m = findTask(inp.dataset.vadd); if (!m) return;
-    m.subtasks.push({ gid: uid(), name, assignee: "", horizon: "vault", dueDate: null, done: false });
+    m.subtasks.push({ gid: uid(), name, assignee: "", horizon: "vault", dueDate: null, done: false, createdAt: new Date().toISOString(), createdBy: ME.person || "" });
     saveTask(m); renderAll(); toast("Added to the vault");
   }));
 }
@@ -1807,7 +1843,7 @@ function renderMe(){
             order: Math.max(0, ...MODEL.tasks.map(t=>t.order||0)) + 1 };
       MODEL.tasks.push(m); created = true;
     } else if (isVault(m) && h !== "vault"){ m.horizon = h; }
-    const ns = { gid: uid(), name: taskName, assignee: "", horizon: h, dueDate: due, done: false };
+    const ns = { gid: uid(), name: taskName, assignee: "", horizon: h, dueDate: due, done: false, createdAt: new Date().toISOString(), createdBy: ME.person || "" };
     assignTo(ns, owner);
     m.subtasks.push(ns);
     saveTask(m);
@@ -1909,6 +1945,50 @@ function draftPerson(p){
   return { subject: "Your week — " + L("firm") + " priorities (week of " + wk + ")", body: b };
 }
 
+let recapMode = "last";
+function recapRange(mode){
+  if (mode === "this") return { start: WEEK_START, end: new Date(Date.now() + 60000), label: "this week so far" };
+  const start = new Date(WEEK_START); start.setDate(start.getDate() - 7);
+  const end = new Date(WEEK_START.getTime() - 1);
+  return { start, end, label: "week of " + fmt(start) + "–" + fmt(end) };
+}
+function computeRecap(mode){
+  const { start, end, label } = recapRange(mode);
+  const inR = iso => { if (!iso) return false; const d = new Date(iso); return d >= start && d <= end; };
+  const byProj = new Map();
+  const bucket = m => { if (!byProj.has(m.gid)) byProj.set(m.gid, { m, done: [], steps: [], created: [], status: null }); return byProj.get(m.gid); };
+  let nDone = 0, nSteps = 0, nStatus = 0, nNew = 0;
+  MODEL.tasks.forEach(m => {
+    if (m.statusAt && inR(m.statusAt) && ST[m.status]){ bucket(m).status = { label: ST[m.status].label, note: m.statusNote || "", by: m.statusBy || "", t: m.statusAt }; nStatus++; }
+    m.subtasks.forEach(s => {
+      if (s.done && inR(s.doneAt)){ bucket(m).done.push(s); nDone++; }
+      (Array.isArray(s.log) ? s.log : []).forEach(e => { if (inR(e.t)){ bucket(m).steps.push({ s, e }); nSteps++; } });
+      if (inR(s.createdAt) && !(s.done && inR(s.doneAt))){ bucket(m).created.push(s); nNew++; }
+    });
+  });
+  const groups = GROUPS().map(g => ({ g, items: [...byProj.values()].filter(x => x.m.group === g).sort((a,b) => byHorizon(a.m, b.m)) })).filter(x => x.items.length);
+  return { start, end, label, groups, nDone, nSteps, nStatus, nNew };
+}
+function draftRecap(mode){
+  const r = computeRecap(mode);
+  let b = PARTNERS.join(", ") + " —\n\nProgress recap for the " + r.label + ".\n";
+  b += "At a glance: " + r.nDone + " task" + (r.nDone===1?"":"s") + " completed, " + r.nSteps + " next step" + (r.nSteps===1?"":"s") + " logged, "
+     + r.nStatus + " status update" + (r.nStatus===1?"":"s") + (r.nNew ? ", " + r.nNew + " new task" + (r.nNew===1?"":"s") + " added" : "") + ".\n\n";
+  if (!r.groups.length) b += "Nothing was logged in this period.\n";
+  r.groups.forEach(({g, items}) => {
+    b += g.toUpperCase() + "\n";
+    items.forEach(({m, done, steps, created, status}) => {
+      b += "  " + m.name + (m.lead ? " — " + m.lead : "") + " (" + hLabel(m.horizon) + ")\n";
+      if (status) b += "    Status: " + status.label + (status.note ? " — " + status.note : "") + (status.by ? " (" + status.by + ", " + fmtWhen(status.t) + ")" : "") + "\n";
+      done.forEach(s => { b += "    ✓ " + s.name + (s.assignee ? " — " + s.assignee : "") + (s.doneAt ? ", " + fmtWhen(s.doneAt) : "") + "\n"; });
+      steps.forEach(({s, e}) => { b += "    → " + s.name + ": " + e.text + (e.by ? " — " + e.by : "") + ", " + fmtWhen(e.t) + "\n"; });
+      created.forEach(s => { b += "    + New: " + s.name + (s.assignee ? " — " + s.assignee : "") + (s.dueDate ? ", due " + fmt(s.dueDate) : "") + "\n"; });
+    });
+    b += "\n";
+  });
+  b += "—\nSent from Lyric Flow\n";
+  return { subject: L("firm") + " — progress recap (" + r.label + ")", body: b };
+}
 let emailSel = "partners";
 function openEmail(pre){
   emailSel = pre || "partners";
@@ -1918,12 +1998,13 @@ function openEmail(pre){
 function closeEmail(){ $("#emailModal").hidden = true; }
 function renderEmail(){
   const box = document.querySelector("#emailModal .modal");
-  const draft = emailSel === "partners" ? draftFirm() : draftPerson(emailSel);
+  const draft = emailSel === "partners" ? draftFirm() : emailSel === "recap" ? draftRecap(recapMode) : draftPerson(emailSel);
   box.innerHTML = `
     <div class="modal-head"><h2 class="pv-title">Draft email</h2><button class="xbtn" id="emClose" type="button" aria-label="Close">✕</button></div>
     <div class="filters" style="margin-bottom:10px">
       <span class="flabel">Send to</span>
-      <button class="fchip ${emailSel==="partners"?"on":""}" data-em="partners" type="button">Partners — ${PARTNERS.join(" & ")}</button>
+      <button class="fchip ${emailSel==="partners"?"on":""}" data-em="partners" type="button">Partners — this week's priorities</button>
+      <button class="fchip ${emailSel==="recap"?"on":""}" data-em="recap" type="button">Partners — progress recap</button>
       <span class="fdivider"></span>
       ${peopleList().map(p=>`<button class="fchip ${emailSel===p?"on":""}" data-em="${esc(p)}" type="button">${av(p)}${esc(p)}</button>`).join("")}
     </div>
@@ -1936,7 +2017,7 @@ function renderEmail(){
       <button class="ghostbtn" id="emCopy" type="button">Copy email</button>
       <span class="meta-note" style="margin:0" id="emToNote"></span>
     </div>`;
-  const rcpts = emailSel === "partners" ? PARTNERS : [emailSel];
+  const rcpts = (emailSel === "partners" || emailSel === "recap") ? PARTNERS : [emailSel];
   const known = rcpts.map(r => MODEL.emails[r]).filter(Boolean);
   box.querySelector("#emToNote").textContent = known.length
     ? "To: " + known.join(", ")
@@ -1946,7 +2027,7 @@ function renderEmail(){
   box.querySelector("#emMail").addEventListener("click", () => {
     const subj = box.querySelector("#emSubj").value;
     const body = box.querySelector("#emBody").value;
-    const rcpts = emailSel === "partners" ? PARTNERS : [emailSel];
+    const rcpts = (emailSel === "partners" || emailSel === "recap") ? PARTNERS : [emailSel];
     const to = rcpts.map(r => MODEL.emails[r]).filter(Boolean).join(",");
     const a = document.createElement("a");
     a.href = "mailto:" + to + "?subject=" + encodeURIComponent(subj) + "&body=" + encodeURIComponent(body);
@@ -2220,7 +2301,7 @@ document.addEventListener("click", e => {
     if (!name){ toast("Give the action a name"); return; }
     const m = findTask(mgid);
     if (!m) return;
-    const ns = { gid: uid(), name, assignee: "", horizon: wrap.querySelector(".na-h").value, dueDate: wrap.querySelector(".na-d").value || null, done: false };
+    const ns = { gid: uid(), name, assignee: "", horizon: wrap.querySelector(".na-h").value, dueDate: wrap.querySelector(".na-d").value || null, done: false, createdAt: new Date().toISOString(), createdBy: ME.person || "" };
     assignTo(ns, wrap.querySelector(".na-a").value);
     m.subtasks.push(ns);
     saveTask(m); renderAll();
@@ -2406,7 +2487,14 @@ function renderTaskModal(){
 document.addEventListener("click", e => {
   const t = e.target.closest(".tlink[data-open]");
   if (t){ e.stopPropagation(); openTask(t.dataset.open); return; }
-  if (e.target === $("#taskModal")) closeTask();
+  if (e.target === $("#taskModal")){ closeTask(); return; }
+  // whole-row click: any non-interactive part of a task row opens the panel
+  if (e.target.closest("button,input,select,a,label,.edl,.chip,.nx,.spill,.switch")) return;
+  if (e.target.closest("#taskModal,.rowhead,.vproj-head,.todo")) return;
+  const row = e.target.closest(".subtask[data-gid],.sum-action[data-gid],.vrow[data-gid],.inbox-row[data-gid],.done-row[data-gid],table.actions tr[data-gid]");
+  if (!row) return;
+  const s = findTask(row.dataset.gid), m = mainOf(row.dataset.gid);
+  if (s && m && s !== m){ e.stopPropagation(); openTask(row.dataset.gid); }
 }, true);
 document.addEventListener("keydown", e => { if (e.key === "Escape" && taskModalGid && !document.activeElement.closest(".nx-in,.inline-input,.tm-name")) closeTask(); });
 
